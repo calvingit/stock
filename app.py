@@ -14,8 +14,8 @@ import uvicorn
 
 app = FastAPI(title="ETF均线策略回测工具")
 
-WIND_CLI_DIR = os.path.expanduser("~/.hermes/skills/wind-mcp-skill")
-CACHE_DIR = os.path.expanduser("/tmp/etf_backtest_cache")
+WIND_CLI_DIR = os.path.expanduser(os.getenv("WIND_CLI_DIR", os.path.join(os.path.dirname(__file__), "")))
+CACHE_DIR = os.path.expanduser(os.getenv("ETF_CACHE_DIR", "/tmp/etf_backtest_cache"))
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def fetch_kline(etf_code: str, begin: str, end: str) -> dict:
