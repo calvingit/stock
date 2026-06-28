@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETF 均线策略回测工具</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a;
+    --text: #e1e4ea; --muted: #8b8fa3; --green: #26a69a;
+    --red: #ef5350; --accent: #5c6bc0; --accent2: #42a5f5;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+
+  header { text-align: center; padding: 20px 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  header h1 { font-size: 24px; font-weight: 700; }
+  header p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  .tabs { display: flex; gap: 0; margin-bottom: 16px; }
+  .tab-btn { flex: 1; background: var(--card); border: 1px solid var(--border); color: var(--muted); padding: 10px; font-size: 14px; cursor: pointer; transition: all .2s; }
+  .tab-btn:first-child { border-radius: 8px 0 0 8px; }
+  .tab-btn:last-child { border-radius: 0 8px 8px 0; }
+  .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .form-group { display: flex; flex-direction: column; }
+  .form-group label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+  .form-group input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+  .form-group input:focus { outline: none; border-color: var(--accent); }
+
+  .strategy-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr 30px; gap: 8px; align-items: end; margin-bottom: 6px; padding: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+  .strategy-row .form-group { font-size: 12px; }
+  .strategy-row .form-group input { padding: 6px 8px; font-size: 12px; }
+  .btn-remove { background: rgba(239,83,80,0.15); border: 1px solid rgba(239,83,80,0.3); color: var(--red); width: 28px; height: 28px; border-radius: 6px; font-size: 16px; cursor: pointer; align-self: end; margin-bottom: 2px; }
+  .btn-add { background: var(--card); border: 1px dashed var(--border); color: var(--accent2); padding: 8px; border-radius: 8px; font-size: 13px; cursor: pointer; width: 100%; margin-bottom: 12px; transition: .2s; }
+  .btn-add:hover { border-color: var(--accent2); background: rgba(66,165,245,0.08); }
+
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .preset-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 5px; font-size: 12px; cursor: pointer; transition: .2s; }
+  .preset-btn:hover { border-color: var(--accent); }
+  .preset-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .btn-run { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 20px; }
+  .btn-run:disabled { opacity: .5; cursor: not-allowed; }
+
+  .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h3 { font-size: 12px; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; }
+  .card .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,.03); }
+  .card .stat-row:last-child { border-bottom: none; }
+  .card .stat-val { font-weight: 600; }
+  .positive { color: var(--green); } .negative { color: var(--red); }
+
+  #comparison-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }
+  #comparison-table th { text-align: left; padding: 8px 10px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border); }
+  #comparison-table td { padding: 10px; border-bottom: 1px solid var(--border); }
+  #comparison-table tr.best td { background: rgba(38,166,154,0.06); }
+
+  .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+  .chart-container h3 { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .chart-wrapper { position: relative; height: 450px; }
+  .chart-hint { text-align: center; color: var(--muted); font-size: 11px; margin-top: 6px; }
+
+  .detail-btn { background: transparent; border: 1px solid var(--border); color: var(--accent2); padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .detail-btn:hover { background: rgba(66,165,245,.1); }
+
+  .detail-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.7); z-index: 100; justify-content: center; align-items: center; }
+  .detail-modal.show { display: flex; }
+  .detail-content { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; max-width: 650px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .detail-content h3 { margin-bottom: 14px; }
+  .detail-content table { width: 100%; font-size: 12px; border-collapse: collapse; }
+  .detail-content th { text-align: left; padding: 6px 8px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .detail-content td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.03); }
+  .detail-close { float: right; background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+
+  .loading { text-align: center; padding: 40px; color: var(--muted); }
+  .error-msg { background: rgba(239,83,80,.1); border: 1px solid rgba(239,83,80,.3); color: var(--red); padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; }
+  
+  @media (max-width: 640px) {
+    .form-grid { grid-template-columns: 1fr 1fr; }
+    .strategy-row { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    .summary-cards { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>📊 ETF 均线策略回测</h1>
+    <p>5/10/20 MA 多头买入 · 移动止损控制单笔回撤 · 组合回撤反映连续盈亏累积 · 滚轮缩放</p>
+  </header>
+
+  <!-- 模式切换 -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchMode('etf')">📦 多 ETF 对比（同策略）</button>
+    <button class="tab-btn" onclick="switchMode('strategy')">⚙️ 同 ETF 对比（多策略）</button>
+    <button class="tab-btn" onclick="switchMode('band')">📡 波段策略（周线）</button>
+    <button class="tab-btn" onclick="switchMode('rsi')">📈 RSI趋势（周线）</button>
+    <button class="tab-btn" onclick="switchMode('rotation')">🔄 行业轮动</button>
+    <button class="tab-btn" onclick="switchMode('timing')">🎯 右侧买入时机</button>
+  </div>
+
+  <!-- ETF模式输入 -->
+  <div id="etf-mode">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column: span 2;">
+        <label>ETF代码（逗号分隔）</label>
+        <input type="text" id="codes" placeholder="159995.SZ, 161130.SZ, 588200.SH" value="159995.SZ">
+      </div>
+      <div class="form-group"><label>起始日期</label><input type="date" id="begin" value="2023-06-01"></div>
+      <div class="form-group"><label>结束日期</label><input type="date" id="end" value="2026-06-11"></div>
+      <div class="form-group"><label>快线</label><input type="number" id="fast_ma" value="5" min="2"></div>
+      <div class="form-group"><label>中线</label><input type="number" id="mid_ma" value="10" min="2"></div>
+      <div class="form-group"><label>慢线</label><input type="number" id="slow_ma" value="20" min="3"></div>
+      <div class="form-group"><label>移动止损%</label><input type="number" id="trail_stop" value="5" min="0" step="0.5"></div>
+      <div class="form-group"><label>硬止损%</label><input type="number" id="hard_stop" value="0" min="0" step="0.5"></div>
+      <div class="form-group"><label>成交量确认</label><input type="number" id="volume_confirm" value="1.2" min="0" step="0.1"></div>
+      <div class="form-group"><label>连亏暂停(次)</label><input type="number" id="pause_losses" value="0" min="0" max="5"></div>
+      <div class="form-group"><label>初始资金</label><input type="number" id="initial_capital" value="1000000"></div>
+    </div>
+    <div class="presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">预设:</span>
+      <button class="preset-btn" onclick="applyPreset('default')">经典(5/10/20)</button>
+      <button class="preset-btn active" onclick="applyPreset('chip')">芯片最优(+移5%)</button>
+      <button class="preset-btn" onclick="applyPreset('aggro')">激进(3/7/15+移3%+硬3%)</button>
+      <button class="preset-btn" onclick="applyPreset('cons')">保守(10/20/50+移10%)</button>
+      <button class="preset-btn" onclick="applyPreset('nasdaq')">纳指(5/10/20+移7%)</button>
+    </div>
+  </div>
+
+  <!-- 策略模式输入 -->
+  <div id="strategy-mode" style="display:none;">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column: span 2;">
+        <label>ETF代码（单个）</label>
+        <input type="text" id="strategy_code" placeholder="159995.SZ" value="159995.SZ">
+      </div>
+      <div class="form-group"><label>起始日期</label><input type="date" id="sbegin" value="2023-06-01"></div>
+      <div class="form-group"><label>结束日期</label><input type="date" id="send" value="2026-06-11"></div>
+      <div class="form-group"><label>初始资金</label><input type="number" id="sinitial" value="1000000"></div>
+    </div>
+    <div id="strategy-rows">
+      <div class="strategy-row">
+        <div class="form-group"><label>快线</label><input type="number" class="s-fast" value="5" min="2"></div>
+        <div class="form-group"><label>中线</label><input type="number" class="s-mid" value="10" min="2"></div>
+        <div class="form-group"><label>慢线</label><input type="number" class="s-slow" value="20" min="3"></div>
+        <div class="form-group"><label>移动止损%</label><input type="number" class="s-trail" value="5" min="0" step="0.5"></div>
+        <div class="form-group"><label>硬止损%</label><input type="number" class="s-hard" value="0" min="0" step="0.5"></div>
+        <div class="form-group"><label>成交量</label><input type="number" class="s-vol" value="0" min="0" step="0.1"></div>
+        <div class="form-group"><label>连亏停</label><input type="number" class="s-pause" value="0" min="0" max="5"></div>
+        <button class="btn-remove" onclick="this.parentElement.remove()">×</button>
+      </div>
+    </div>
+    <button class="btn-add" onclick="addStrategyRow()">+ 添加策略组</button>
+    <div class="presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">快速对比:</span>
+      <button class="preset-btn" onclick="quickCompare()">原始 vs +移5% vs +移7% vs +硬3%</button>
+    </div>
+  </div>
+
+  <!-- 波段策略输入 -->
+  <div id="band-mode" style="display:none;">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column: span 2;">
+        <label>ETF代码（逗号分隔）</label>
+        <input type="text" id="band_codes" placeholder="159995.SZ, 161130.SZ, 588200.SH" value="159995.SZ">
+      </div>
+      <div class="form-group"><label>起始日期</label><input type="date" id="bbegin" value="2021-01-01"></div>
+      <div class="form-group"><label>结束日期</label><input type="date" id="bend" value="2026-06-11"></div>
+      <div class="form-group"><label>初始资金</label><input type="number" id="binitial" value="1000000"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;">
+        <div style="color:var(--green);font-weight:600;margin-bottom:6px;font-size:12px;">📈 买入条件</div>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+          <div class="form-group"><label>KDJ_K &lt;</label><input type="number" id="buy_k" value="30" min="0" max="100"></div>
+          <div class="form-group"><label>RSI &lt;</label><input type="number" id="buy_rsi" value="40" min="0" max="100"></div>
+          <div class="form-group"><label>RPS20 ≥</label><input type="number" id="buy_rps" value="10" min="0" max="100"></div>
+        </div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;">
+        <div style="color:var(--red);font-weight:600;margin-bottom:6px;font-size:12px;">📉 卖出条件</div>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+          <div class="form-group"><label>KDJ_K &gt;</label><input type="number" id="sell_k" value="80" min="0" max="100"></div>
+          <div class="form-group"><label>RSI &gt;</label><input type="number" id="sell_rsi" value="70" min="0" max="100"></div>
+          <div class="form-group"><label>RPS20 &lt;</label><input type="number" id="sell_rps" value="20" min="0" max="100"></div>
+        </div>
+      </div>
+    </div>
+    <div class="presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">预设:</span>
+      <button class="preset-btn active" onclick="applyBandPreset('default')">推荐(K&lt;30,RSI&lt;40)</button>
+      <button class="preset-btn" onclick="applyBandPreset('loose')">宽松(K&lt;35,RSI&lt;45)</button>
+      <button class="preset-btn" onclick="applyBandPreset('tight')">严格(K&lt;25,RSI&lt;35)</button>
+    </div>
+  </div>
+
+  <!-- RSI趋势策略输入 -->
+  <div id="rsi-mode" style="display:none;">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column: span 2;">
+        <label>ETF代码（逗号分隔）</label>
+        <input type="text" id="rsi_codes" placeholder="159995.SZ, 161130.SZ" value="159995.SZ">
+      </div>
+      <div class="form-group"><label>起始日期</label><input type="date" id="rbegin" value="2021-01-01"></div>
+      <div class="form-group"><label>结束日期</label><input type="date" id="rend" value="2026-06-11"></div>
+      <div class="form-group"><label>初始资金</label><input type="number" id="rinitial" value="1000000"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;">
+        <div style="color:var(--green);font-weight:600;margin-bottom:6px;font-size:12px;">📈 RSI买入</div>
+        <div class="form-group"><label>RSI上穿</label><input type="number" id="rsi_buy" value="50" min="30" max="80"></div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;">
+        <div style="color:var(--red);font-weight:600;margin-bottom:6px;font-size:12px;">📉 RSI卖出</div>
+        <div class="form-group"><label>RSI下穿</label><input type="number" id="rsi_sell" value="40" min="20" max="70"></div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;">
+        <div style="color:#ffa726;font-weight:600;margin-bottom:6px;font-size:12px;">🛡 移动止损</div>
+        <div class="form-group"><label>回撤%</label><input type="number" id="rsi_trail" value="10" min="3" max="30" step="0.5"></div>
+      </div>
+    </div>
+    <div class="presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">预设:</span>
+      <button class="preset-btn active" onclick="applyRsiPreset('best')">最优(50/40+移10%)</button>
+      <button class="preset-btn" onclick="applyRsiPreset('tight')">严格(55/45+移8%)</button>
+      <button class="preset-btn" onclick="applyRsiPreset('loose')">宽松(50/40+移15%)</button>
+    </div>
+  </div>
+
+  <!-- 行业轮动输入 -->
+  <div id="rotation-mode" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <label style="font-weight:600;white-space:nowrap;">ETF池:</label>
+      <select id="rot_pool" onchange="onPoolChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:13px;">
+        <option value="industry">🏭 申万一级行业 (27只)</option>
+        <option value="broad">📊 宽基指数 (4只)</option>
+        <option value="cross_asset">🌍 跨资产低相关 (5只)</option>
+      </select>
+      <span id="rot_pool_info" style="color:var(--muted);font-size:11px;">27只行业ETF</span>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label>初始资金(万)</label><input type="number" id="rot_capital" value="100" min="10"></div>
+      <div class="form-group"><label>最大持仓数</label><input type="number" id="rot_maxpos" value="2" min="1" max="10"></div>
+      <div class="form-group"><label>移动止损%</label><input type="number" id="rot_trail" value="7" min="3" max="20" step="0.5"></div>
+      <div class="form-group"><label>硬止损%</label><input type="number" id="rot_hard" value="0" min="0" max="15" step="0.5"></div>
+      <div class="form-group"><label>调仓周期(周)</label><input type="number" id="rot_weeks" value="1" min="1" max="4"></div>
+      <div class="form-group"><label>大盘MA周期</label><input type="number" id="rot_mkt_ma" value="100" min="20" max="250"></div>
+      <div class="form-group"><label>ETF自身MA</label><input type="number" id="rot_etf_ma" value="0" min="0" max="250"></div>
+      <div class="form-group"><label>组合熔断%</label><input type="number" id="rot_cb" value="0" min="0" max="30" step="1"></div>
+      <div class="form-group"><label>熔断冷却(周)</label><input type="number" id="rot_cb_weeks" value="4" min="1" max="12"></div>
+      <div class="form-group"><label>快线MA</label><input type="number" id="rot_fast" value="5" min="3" max="50"></div>
+      <div class="form-group"><label>中线MA</label><input type="number" id="rot_mid" value="15" min="10" max="120"></div>
+      <div class="form-group"><label>慢线MA</label><input type="number" id="rot_slow" value="50" min="20" max="250"></div>
+      <div class="form-group"><label>RSI下限</label><input type="number" id="rot_rsi_low" value="50" min="30" max="70"></div>
+      <div class="form-group"><label>RSI上限</label><input type="number" id="rot_rsi_high" value="85" min="70" max="95"></div>
+      <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:4px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="rot_market_timing" checked style="width:16px;height:16px;">
+          大盘择时(沪深300>MA100空仓)
+        </label>
+      </div>
+    </div>
+    <div style="color:var(--muted);font-size:11px;margin:4px 0 12px;">
+      📋 27只申万一级行业ETF | 选股: 均线多头 + 价>快线 + RSI区间 + 20日收益>0 | 大盘择时: 沪深300>MA100
+    </div>
+    <div class="presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">预设:</span>
+      <button class="preset-btn active" onclick="applyRotPreset('fast')">最优2只(5/15/50)</button>
+      <button class="preset-btn" onclick="applyRotPreset('single')">单只激进(5/15/50)</button>
+      <button class="preset-btn" onclick="applyRotPreset('early')">早期3只(10/30/60)</button>
+      <button class="preset-btn" onclick="applyRotPreset('classic')">经典5只(20/60/120)</button>
+    </div>
+  </div>
+
+  <!-- 右侧买入时机输入 -->
+  <div id="timing-mode" style="display:none;">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column: span 2;">
+        <label>ETF代码</label>
+        <input type="text" id="timing_code" placeholder="513120.SH / 513780.SH / 159995.SZ" value="513120.SH">
+      </div>
+    </div>
+    <div class="presets" id="timing-presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">ETF池:</span>
+      <button class="preset-btn" onclick="document.getElementById('timing_code').value='513120.SH';runTiming()">港股创新药(广发)</button>
+      <button class="preset-btn" onclick="document.getElementById('timing_code').value='513780.SH';runTiming()">港股通创新药(景顺)</button>
+      <button class="preset-btn" onclick="document.getElementById('timing_code').value='159995.SZ';runTiming()">芯片ETF</button>
+      <button class="preset-btn" onclick="document.getElementById('timing_code').value='161130.SZ';runTiming()">纳指LOF</button>
+      <button class="preset-btn" onclick="document.getElementById('timing_code').value='510050.SH';runTiming()">上证50</button>
+      <button class="preset-btn" onclick="document.getElementById('timing_code').value='159915.SZ';runTiming()">创业板</button>
+    </div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:12px;line-height:1.6;">
+      📊 四维信号：<b>MACD金叉</b> · <b>RSI健康回调</b> · <b>底部形态确认</b> · <b>均线拐头</b><br>
+      🎯 按右侧趋势框架判定，不抄底，等趋势确认后再入
+    </div>
+  </div>
+
+  <button class="btn-run" id="btnRun" onclick="runBacktest()">▶ 开始回测</button>
+
+  <div id="results"></div>
+</div>
+
+<div class="detail-modal" id="detailModal"><div class="detail-content" id="detailContent"></div></div>
+
+<script>
+let currentMode = 'etf';
+let chartInstance = null;
+const COLORS = ['#5c6bc0','#26a69a','#ef5350','#ffa726','#ab47bc','#42a5f5','#66bb6a','#ff7043','#78909c','#ec407a'];
+
+function switchMode(m) {
+  currentMode = m;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('etf-mode').style.display = m==='etf'?'block':'none';
+  document.getElementById('strategy-mode').style.display = m==='strategy'?'block':'none';
+  document.getElementById('band-mode').style.display = m==='band'?'block':'none';
+  document.getElementById('rsi-mode').style.display = m==='rsi'?'block':'none';
+  document.getElementById('rotation-mode').style.display = m==='rotation'?'block':'none';
+  document.getElementById('timing-mode').style.display = m==='timing'?'block':'none';
+  document.getElementById('results').innerHTML = '';
+}
+
+function applyPreset(name) {
+  const p = {
+    default:[5,10,20,0,0], chip:[5,10,20,5,0], aggro:[3,7,15,3,3],
+    cons:[10,20,50,10,0], nasdaq:[5,10,20,7,0]
+  }[name];
+  ['fast_ma','mid_ma','slow_ma','trail_stop','hard_stop'].forEach((id,i) => document.getElementById(id).value = p[i]);
+  document.querySelectorAll('#etf-mode .preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function applyBandPreset(name) {
+  const p = {
+    default:[30,40,10,80,70,20],
+    loose:[35,45,10,80,70,20],
+    tight:[25,35,15,75,65,25],
+  }[name];
+  ['buy_k','buy_rsi','buy_rps','sell_k','sell_rsi','sell_rps'].forEach((id,i) => document.getElementById(id).value = p[i]);
+  document.querySelectorAll('#band-mode .preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function applyRsiPreset(name) {
+  const p = {
+    best:[50,40,10], tight:[55,45,8], loose:[50,40,15],
+  }[name];
+  ['rsi_buy','rsi_sell','rsi_trail'].forEach((id,i) => document.getElementById(id).value = p[i]);
+  document.querySelectorAll('#rsi-mode .preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function onPoolChange() {
+  const pool = document.getElementById('rot_pool').value;
+  const info = {industry:'27只行业ETF', broad:'4只宽基(沪深300/纳指/黄金/国债)', cross_asset:'5只跨资产(科创100+红利+纳指+黄金+国债)'};
+  document.getElementById('rot_pool_info').textContent = info[pool] || '';
+  applyRotPreset(pool === 'broad' ? 'broad' : (pool === 'cross_asset' ? 'cross' : 'fast'));
+}
+
+function applyRotPreset(name) {
+  const p = {
+    fast:[7,1,50,85,true,5,15,50,2,0,100,0,0,4],
+    broad:[8,1,50,85,true,10,30,60,1,0,100,0,0,4],  // 宽基4只, 1仓位, 经典MA
+    cross:[8,1,50,85,false,10,30,60,2,0,100,0,0,4], // 跨资产5只, 无大盘择时
+    early:[12,2,50,85,false,10,30,60,3,0,100,0,0,4],
+    classic:[8,2,50,85,false,20,60,120,5,0,100,0,0,4],
+    single:[7,1,50,85,true,5,15,50,1,0,100,0,0,4],
+  }[name];
+  ['rot_trail','rot_weeks','rot_rsi_low','rot_rsi_high'].forEach((id,i) => document.getElementById(id).value = p[i]);
+  document.getElementById('rot_market_timing').checked = p[4];
+  document.getElementById('rot_fast').value = p[5];
+  document.getElementById('rot_mid').value = p[6];
+  document.getElementById('rot_slow').value = p[7];
+  document.getElementById('rot_maxpos').value = p[8];
+  document.getElementById('rot_hard').value = p[9];
+  document.getElementById('rot_mkt_ma').value = p[10];
+  document.getElementById('rot_etf_ma').value = p[11];
+  document.getElementById('rot_cb').value = p[12];
+  document.getElementById('rot_cb_weeks').value = p[13];
+  document.querySelectorAll('#rotation-mode .preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function quickCompare() {
+  const sets = [
+    [5,10,20,0,0,0,0],[5,10,20,5,0,0,0],[5,10,20,7,0,0,0],[5,10,20,5,3,0,0]
+  ];
+  document.getElementById('strategy-rows').innerHTML = '';
+  sets.forEach(s => {
+    const row = createRow(s[0],s[1],s[2],s[3],s[4],s[5],s[6]);
+    document.getElementById('strategy-rows').appendChild(row);
+  });
+}
+
+function addStrategyRow() {
+  document.getElementById('strategy-rows').appendChild(createRow(5,10,20,0,0,0,0));
+}
+
+function createRow(f,m,s,t,h,v,p) {
+  const div = document.createElement('div');
+  div.className = 'strategy-row';
+  div.innerHTML = `
+    <div class="form-group"><label>快线</label><input type="number" class="s-fast" value="${f}" min="2"></div>
+    <div class="form-group"><label>中线</label><input type="number" class="s-mid" value="${m}" min="2"></div>
+    <div class="form-group"><label>慢线</label><input type="number" class="s-slow" value="${s}" min="3"></div>
+    <div class="form-group"><label>移动止损%</label><input type="number" class="s-trail" value="${t}" min="0" step="0.5"></div>
+    <div class="form-group"><label>硬止损%</label><input type="number" class="s-hard" value="${h}" min="0" step="0.5"></div>
+    <div class="form-group"><label>成交量</label><input type="number" class="s-vol" value="${v}" min="0" step="0.1"></div>
+    <div class="form-group"><label>连亏停</label><input type="number" class="s-pause" value="${p}" min="0" max="5"></div>
+    <button class="btn-remove" onclick="this.parentElement.remove()">×</button>`;
+  return div;
+}
+
+function fmtPct(n) { return (n>=0?'+':'')+n.toFixed(2)+'%'; }
+function cls(n) { return n>=0?'positive':'negative'; }
+
+async function runBacktest() {
+  if (currentMode === 'timing') { return runTiming(); }
+  const btn = document.getElementById('btnRun');
+  btn.disabled = true; btn.textContent = '⏳ 回测中...';
+  document.getElementById('results').innerHTML = '<div class="loading">正在从Wind获取数据并运行回测...</div>';
+
+  let params;
+  if (currentMode === 'etf') {
+    params = new URLSearchParams({
+      mode:'etf',
+      codes: document.getElementById('codes').value,
+      begin: document.getElementById('begin').value,
+      end: document.getElementById('end').value,
+      fast_ma: document.getElementById('fast_ma').value,
+      mid_ma: document.getElementById('mid_ma').value,
+      slow_ma: document.getElementById('slow_ma').value,
+      trail_stop: document.getElementById('trail_stop').value / 100,
+      hard_stop: document.getElementById('hard_stop').value / 100,
+      volume_confirm: document.getElementById('volume_confirm').value,
+      pause_after_losses: document.getElementById('pause_losses').value,
+      initial_capital: document.getElementById('initial_capital').value,
+    });
+  } else if (currentMode === 'band') {
+    params = new URLSearchParams({
+      codes: document.getElementById('band_codes').value,
+      begin: document.getElementById('bbegin').value,
+      end: document.getElementById('bend').value,
+      buy_k: document.getElementById('buy_k').value,
+      buy_rsi: document.getElementById('buy_rsi').value,
+      buy_rps: document.getElementById('buy_rps').value,
+      sell_k: document.getElementById('sell_k').value,
+      sell_rsi: document.getElementById('sell_rsi').value,
+      sell_rps: document.getElementById('sell_rps').value,
+      initial_capital: document.getElementById('binitial').value,
+    });
+    var apiPath = 'api/backtest/band';
+  } else if (currentMode === 'rsi') {
+    params = new URLSearchParams({
+      codes: document.getElementById('rsi_codes').value,
+      begin: document.getElementById('rbegin').value,
+      end: document.getElementById('rend').value,
+      rsi_buy: document.getElementById('rsi_buy').value,
+      rsi_sell: document.getElementById('rsi_sell').value,
+      trail_stop: document.getElementById('rsi_trail').value,
+      initial_capital: document.getElementById('rinitial').value,
+    });
+    var apiPath = 'api/backtest/rsi_trend';
+  } else if (currentMode === 'rotation') {
+    params = new URLSearchParams({
+      pool: document.getElementById('rot_pool').value,
+      trail_stop: document.getElementById('rot_trail').value,
+      rebalance_weeks: document.getElementById('rot_weeks').value,
+      rsi_low: document.getElementById('rot_rsi_low').value,
+      rsi_high: document.getElementById('rot_rsi_high').value,
+      market_timing: document.getElementById('rot_market_timing').checked,
+      market_ma: document.getElementById('rot_mkt_ma').value,
+      initial_capital: document.getElementById('rot_capital').value * 10000,
+      fast_ma: document.getElementById('rot_fast').value,
+      mid_ma: document.getElementById('rot_mid').value,
+      slow_ma: document.getElementById('rot_slow').value,
+      max_positions: document.getElementById('rot_maxpos').value,
+      hard_stop: document.getElementById('rot_hard').value,
+      etf_ma: document.getElementById('rot_etf_ma').value,
+      circuit_breaker: document.getElementById('rot_cb').value,
+      circuit_weeks: document.getElementById('rot_cb_weeks').value,
+    });
+    var apiPath = 'api/backtest/industry_rotation';
+  } else if (currentMode === 'timing') {
+    params = new URLSearchParams({
+      code: document.getElementById('timing_code').value.trim(),
+    });
+    var apiPath = 'api/buy_timing';
+  } else {
+    const rows = document.querySelectorAll('#strategy-rows .strategy-row');
+    const sets = [];
+    rows.forEach(r => {
+      sets.push({
+        fast_ma: parseInt(r.querySelector('.s-fast').value),
+        mid_ma: parseInt(r.querySelector('.s-mid').value),
+        slow_ma: parseInt(r.querySelector('.s-slow').value),
+        trail_stop: parseFloat(r.querySelector('.s-trail').value) / 100,
+        hard_stop: parseFloat(r.querySelector('.s-hard').value) / 100,
+        volume_confirm: parseFloat(r.querySelector('.s-vol').value) || 0,
+        pause_after_losses: parseInt(r.querySelector('.s-pause').value) || 0,
+      });
+    });
+    if (sets.length === 0) { alert('请至少添加一组策略'); btn.disabled=false; btn.textContent='▶ 开始回测'; return; }
+    params = new URLSearchParams({
+      mode:'strategy',
+      codes: document.getElementById('strategy_code').value,
+      begin: document.getElementById('sbegin').value,
+      end: document.getElementById('send').value,
+      initial_capital: document.getElementById('sinitial').value,
+      strategy_sets: JSON.stringify(sets),
+    });
+  }
+
+  try {
+    const resp = await fetch((apiPath||'api/backtest')+'?'+params.toString());
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail||'Server error'); }
+    const data = await resp.json();
+    if (data.mode === 'industry_rotation') {
+      renderRotationResults(data);
+    } else if (data.signals) {
+      renderTiming(data);
+    } else {
+      renderResults(data);
+    }
+  } catch(e) {
+    document.getElementById('results').innerHTML = `<div class="error-msg">回测失败: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ 开始回测';
+  }
+}
+
+function renderResults(data) {
+  if (!data.results || data.results.length === 0) {
+    document.getElementById('results').innerHTML = '<div class="error-msg">无数据返回</div>'; return;
+  }
+  const valid = data.results.filter(r => !r.error);
+  if (valid.length === 0) {
+    document.getElementById('results').innerHTML = data.results.map(r => `<div class="error-msg">${r.code}: ${r.error}</div>`).join('');
+    return;
+  }
+
+  let bestIdx = 0;
+  valid.forEach((r,i) => { if (r.total_return > (valid[bestIdx]?.total_return||-Infinity)) bestIdx = i; });
+
+  let html = '<div class="summary-cards">';
+  valid.forEach((r,i) => {
+    const name = r.label || r.code;
+    html += `<div class="card">
+      <h3>${name} <button class="detail-btn" onclick="showDetail('${r.code}',${data.mode==='strategy'?JSON.stringify(r.strategy_params).replace(/"/g,'&quot;'):'null'})">📋 交易</button></h3>
+      <div class="stat-row"><span>策略收益</span><span class="stat-val ${cls(r.total_return)}">${fmtPct(r.total_return)}</span></div>
+      <div class="stat-row"><span>买入持有</span><span class="stat-val ${cls(r.buy_hold_return)}">${fmtPct(r.buy_hold_return)}</span></div>
+      <div class="stat-row"><span>超额α</span><span class="stat-val ${cls(r.alpha)}">${fmtPct(r.alpha)}</span></div>
+      <div class="stat-row"><span>交易</span><span class="stat-val">${r.trade_count}轮</span></div>
+      <div class="stat-row"><span>胜率</span><span class="stat-val">${r.win_rate}%</span></div>
+      <div class="stat-row"><span>组合回撤</span><span class="stat-val negative">-${r.max_drawdown}%</span></div>
+      <div class="stat-row"><span>单笔最差</span><span class="stat-val ${cls(r.worst_trade)}">${fmtPct(r.worst_trade)}</span></div>
+      <div class="stat-row"><span>过滤信号</span><span class="stat-val" style="color:var(--muted)">量${r.skipped_volume||0} 停${r.skipped_pause||0}</span></div>
+      <div class="stat-row"><span>均笔收益</span><span class="stat-val ${cls(r.avg_gain)}">${fmtPct(r.avg_gain)}</span></div>
+      <div class="stat-row"><span>夏普(约)</span><span class="stat-val">${r.sharpe_approx||'—'}</span></div>
+    </div>`;
+  });
+  html += '</div>';
+
+  // 对比表
+  html += `<table id="comparison-table"><thead><tr>
+    <th>${data.mode==='etf'?'ETF':'策略'}</th>
+    <th>策略收益</th><th>买入持有</th><th>超额α</th><th>交易</th><th>胜率</th><th>组合回撤</th><th>单笔最差</th><th>均笔收益</th>
+  </tr></thead><tbody>`;
+  valid.forEach((r,i) => {
+    html += `<tr${i===bestIdx?' class="best"':''}>
+      <td><strong>${r.label||r.code}</strong>${i===bestIdx?' 👑':''}</td>
+      <td class="${cls(r.total_return)}">${fmtPct(r.total_return)}</td>
+      <td class="${cls(r.buy_hold_return)}">${fmtPct(r.buy_hold_return)}</td>
+      <td class="${cls(r.alpha)}">${fmtPct(r.alpha)}</td>
+      <td>${r.trade_count}</td><td>${r.win_rate}%</td>
+      <td class="negative">-${r.max_drawdown}%</td>
+      <td class="${cls(r.worst_trade)}">${fmtPct(r.worst_trade)}</td>
+      <td class="${cls(r.avg_gain)}">${fmtPct(r.avg_gain)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+
+  html += `<div class="chart-container">
+    <h3>📈 净值曲线对比</h3>
+    <div class="chart-wrapper"><canvas id="navChart"></canvas></div>
+    <div class="chart-hint">🖱 滚轮缩放 · 拖拽平移 · 双击复位</div>
+  </div>`;
+
+  html += `<div style="text-align:center;color:var(--muted);font-size:11px;padding:12px;">
+    回测区间: ${data.period} | 模式: ${data.mode==='etf'?'多ETF同策略':data.mode==='band'?'波段策略(周线)':data.mode==='rsi_trend'?'RSI趋势(周线)':'同ETF多策略'} | 数据: Wind万得</div>`;
+
+  document.getElementById('results').innerHTML = html;
+  setTimeout(() => drawChart(valid, data), 150);
+}
+
+function drawChart(results, data) {
+  const ctx = document.getElementById('navChart');
+  if (!ctx) return;
+  if (chartInstance) chartInstance.destroy();
+
+  const cap = data.params.initial_capital || 1000000;
+  const ds = [];
+
+  // 所有曲线对齐到最大长度
+  const maxLen = Math.max(...results.map(r => (r.nav_series||[]).length));
+  const maxCloseLen = Math.max(...results.map(r => (r.closes||[]).length));
+
+  results.forEach((r,i) => {
+    const pad = maxLen - (r.nav_series||[]).length;
+    const nav = Array(pad).fill(null).concat((r.nav_series||[]).map(v => (v-cap)/cap*100));
+
+    const closePad = maxCloseLen - (r.closes||[]).length;
+    const bh = Array(closePad + (maxLen - maxCloseLen)).fill(null)
+      .concat((r.closes||[]).map(c => (c-r.closes[0])/r.closes[0]*100));
+    const name = r.label || r.code;
+
+    ds.push({
+      label: `${name} 策略`, data: nav,
+      borderColor: COLORS[(i*2)%COLORS.length], borderWidth: 2.5, tension: .1, fill: false, pointRadius: 0, yAxisID: 'y',
+    });
+    ds.push({
+      label: `${name} 持有`, data: bh,
+      borderColor: COLORS[(i*2+1)%COLORS.length]||COLORS[(i*2)%COLORS.length], borderWidth: 1, borderDash: [5,4], tension: .1, fill: false, pointRadius: 0, yAxisID: 'y',
+    });
+
+    // 标记点只在第一个结果显示
+    if (i === 0 && r.marks) {
+      const buys = [], sells = [];
+      r.marks.forEach(m => {
+        const ni = pad + m.idx - ((r.min_days||20)-1);
+        if (ni >=0 && ni < nav.length) {
+          (m.type==='buy'?buys:sells).push({x:ni, y:nav[ni]});
+        }
+      });
+      if (buys.length) ds.push({
+        label: '买入', data: buys, borderColor: '#26a69a', backgroundColor: '#26a69a',
+        pointStyle: 'triangle', pointRadius: 6, showLine: false, yAxisID: 'y',
+      });
+      if (sells.length) ds.push({
+        label: '卖出', data: sells, borderColor: '#ef5350', backgroundColor: '#ef5350',
+        pointStyle: 'triangle', rotation: 180, pointRadius: 6, showLine: false, yAxisID: 'y',
+      });
+    }
+
+    // ETF价格线(右轴, 仅第一个)
+    if (i === 0 && r.closes) {
+      const pricePad = maxLen - (r.closes||[]).length;
+      ds.push({
+        label: '价格', data: Array(pricePad).fill(null).concat(r.closes),
+        borderColor: '#ffa726', borderWidth: 1, borderDash: [2,2], tension: .1, fill: false, pointRadius: 0, yAxisID: 'y1',
+      });
+    }
+  });
+
+  chartInstance = new Chart(ctx, {
+    type: 'line', data: { labels: Array.from({length:maxLen},(_,i)=>i), datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { labels: { color: '#8b8fa3', usePointStyle: true, padding: 10, font: {size:10},
+          filter: item => !['买入','卖出'].includes(item.text) } },
+        tooltip: { callbacks: { label: c => c.dataset.label==='价格'?`价格: ¥${(c.parsed.y||0).toFixed(3)}`:`${c.dataset.label}: ${(c.parsed.y||0).toFixed(2)}%` } },
+        zoom: {
+          zoom: {
+            wheel: { enabled: true, speed: 0.1 },
+            pinch: { enabled: true },
+            mode: 'x',
+            onZoomComplete: () => {}
+          },
+          pan: { enabled: true, mode: 'x', speed: 0.5 },
+        }
+      },
+      scales: {
+        x: { display: false },
+        y: { type:'linear', position:'left', title:{display:true,text:'收益率 %',color:'#8b8fa3'},
+          ticks:{color:'#8b8fa3',callback:v=>v.toFixed(0)+'%'}, grid:{color:'#2a2d3a'} },
+        y1: { type:'linear', position:'right', title:{display:true,text:'ETF价格 ¥',color:'#ffa726'},
+          ticks:{color:'#ffa726',callback:v=>'¥'+(v||0).toFixed(2)}, grid:{drawOnChartArea:false} },
+      }
+    }
+  });
+}
+
+async function showDetail(code, strategyParams) {
+  const modal = document.getElementById('detailModal');
+  const content = document.getElementById('detailContent');
+  modal.classList.add('show');
+  content.innerHTML = '<div class="loading">加载中...</div>';
+
+  let params;
+  if (strategyParams && strategyParams !== 'null') {
+    const sp = typeof strategyParams === 'string' ? JSON.parse(strategyParams) : strategyParams;
+    params = new URLSearchParams({
+      code, begin: document.getElementById(currentMode==='etf'?'begin':'sbegin').value,
+      end: document.getElementById(currentMode==='etf'?'end':'send').value,
+      fast_ma: sp.fast_ma||5, mid_ma: sp.mid_ma||10, slow_ma: sp.slow_ma||20,
+      trail_stop: sp.trail_stop||0, hard_stop: sp.hard_stop||0,
+      initial_capital: document.getElementById(currentMode==='etf'?'initial_capital':'sinitial').value,
+    });
+  } else {
+    params = new URLSearchParams({
+      code,
+      begin: document.getElementById('begin').value,
+      end: document.getElementById('end').value,
+      fast_ma: document.getElementById('fast_ma').value,
+      mid_ma: document.getElementById('mid_ma').value,
+      slow_ma: document.getElementById('slow_ma').value,
+      trail_stop: document.getElementById('trail_stop').value,
+      hard_stop: document.getElementById('hard_stop').value,
+      initial_capital: document.getElementById('initial_capital').value,
+    });
+  }
+
+  try {
+    const resp = await fetch('api/backtest/detail?'+params.toString());
+    const data = await resp.json();
+    let html = `<button class="detail-close" onclick="document.getElementById('detailModal').classList.remove('show')">✕</button>`;
+    html += `<h3>${code} 详细交易 (${data.trade_count||0}轮)</h3>`;
+    html += `<table><thead><tr><th>#</th><th>买入价</th><th>卖出价</th><th>收益率</th><th>离场原因</th></tr></thead><tbody>`;
+    const buys = (data.trades||[]).filter(t=>t.type==='buy');
+    const sells = (data.trades||[]).filter(t=>t.type.startsWith('sell'));
+    buys.forEach((b,i) => {
+      const s = sells[i];
+      if (!s) return;
+      const ret = ((s.amount-b.amount)/b.amount*100).toFixed(2);
+      html += `<tr><td>${i+1}</td><td>${b.price}</td><td>${s.price}</td>
+        <td class="${ret>=0?'positive':'negative'}">${ret>=0?'+':''}${ret}%</td>
+        <td style="color:var(--muted);font-size:11px">${s.reason}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    content.innerHTML = html;
+  } catch(e) {
+    content.innerHTML = `<div class="error-msg">${e.message}</div>`;
+  }
+}
+
+document.getElementById('detailModal').addEventListener('click', function(e) {
+  if (e.target===this) this.classList.remove('show');
+});
+
+function renderRotationResults(data) {
+  const r = data.result;
+  const s = r.stats;
+  const cap = s.initial_capital;
+  
+  let html = '<div class="summary-cards">';
+  html += `<div class="card" style="grid-column:span 3;">
+    <h3>🔄 申万行业ETF右侧轮动 <span style="font-weight:400;color:var(--muted);font-size:12px;">27只ETF | 本金${(cap/10000).toFixed(0)}万 | 每只20万上限</span></h3>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:8px;">
+      <div class="stat-row"><span>总收益</span><span class="stat-val ${s.total_return>=0?'positive':'negative'}">${fmtPct(s.total_return)}</span></div>
+      <div class="stat-row"><span>最大回撤</span><span class="stat-val negative">${s.max_drawdown.toFixed(2)}%</span></div>
+      <div class="stat-row"><span>胜率</span><span class="stat-val">${s.win_rate}%</span></div>
+      <div class="stat-row"><span>总交易</span><span class="stat-val">${s.num_trades}笔</span></div>
+      <div class="stat-row"><span>总盈亏</span><span class="stat-val ${s.total_pnl>=0?'positive':'negative'}">¥${s.total_pnl.toLocaleString()}</span></div>
+      <div class="stat-row"><span>平均盈利</span><span class="stat-val positive">${s.avg_win>0?'+':''}${s.avg_win.toFixed(2)}%</span></div>
+      <div class="stat-row"><span>平均亏损</span><span class="stat-val negative">${s.avg_loss.toFixed(2)}%</span></div>
+      <div class="stat-row"><span>最终资产</span><span class="stat-val">¥${s.final_value.toLocaleString()}</span></div>
+      <div class="stat-row"><span>买入次数</span><span class="stat-val">${s.num_buys}</span></div>
+      <div class="stat-row"><span>卖出次数</span><span class="stat-val">${s.num_sells}</span></div>
+    </div>
+  </div>`;
+  html += '</div>';
+  
+  // Chart
+  html += '<div class="chart-container"><canvas id="rotChart"></canvas></div>';
+  
+  // Trade table (recent 30)
+  const trades = r.trades || [];
+  html += '<details style="margin-top:12px;"><summary style="cursor:pointer;color:var(--accent);font-size:13px;">📋 交易明细 (' + trades.length + '笔)</summary>';
+  html += '<div style="max-height:400px;overflow-y:auto;margin-top:8px;"><table><thead><tr><th>日期</th><th>操作</th><th>代码</th><th>价格</th><th>股数</th><th>金额</th><th>盈亏</th><th>原因</th></tr></thead><tbody>';
+  const recent = trades.slice(-50);
+  recent.forEach(t => {
+    const pnlStr = t.type==='sell' ? `<span class="${t.pnl>=0?'positive':'negative'}">${t.pnl>=0?'+':''}${t.pnl.toLocaleString()} (${t.pnl_pct>=0?'+':''}${t.pnl_pct}%)</span>` : '-';
+    html += `<tr>
+      <td>${t.date}</td>
+      <td style="color:${t.type==='buy'?'var(--green)':'var(--red)'}">${t.type==='buy'?'买入':'卖出'}</td>
+      <td>${t.code}</td>
+      <td>${t.price}</td>
+      <td>${t.shares.toLocaleString()}</td>
+      <td>¥${t.proceeds.toLocaleString()}</td>
+      <td>${pnlStr}</td>
+      <td style="color:var(--muted);font-size:11px">${t.reason}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div></details>';
+  
+  document.getElementById('results').innerHTML = html;
+  
+  // Draw chart
+  setTimeout(() => {
+    const ctx = document.getElementById('rotChart');
+    if (!ctx || !r.nav_series) return;
+    if (chartInstance) chartInstance.destroy();
+    
+    const nav = r.nav_series;
+    const returns = nav.map(v => (v - cap) / cap * 100);
+    const dates = r.daily_dates || [];
+    const posCount = r.pos_count_series || [];
+    
+    chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: dates,
+        datasets: [{
+          label: '策略收益%',
+          data: returns,
+          borderColor: '#26a69a',
+          backgroundColor: 'rgba(38,166,154,0.1)',
+          fill: true,
+          tension: 0.1,
+          pointRadius: 0,
+          yAxisID: 'y',
+        }, {
+          label: '持仓数',
+          data: posCount,
+          borderColor: '#ffa726',
+          borderDash: [3,3],
+          tension: 0.1,
+          pointRadius: 0,
+          yAxisID: 'y1',
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          zoom: { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }, pan: { enabled: true, mode: 'x' } },
+          legend: { labels: { color: '#aaa' } }
+        },
+        scales: {
+          x: { ticks: { color: '#666', maxTicksLimit: 12 } },
+          y: { type: 'linear', position: 'left', title: { text: '收益率%', color: '#26a69a', display: true },
+            ticks: { color: '#666', callback: v => v.toFixed(0)+'%' }, grid: { color: '#222' } },
+          y1: { type: 'linear', position: 'right', min:0, max:5, title: { text: '持仓数', color: '#ffa726', display: true },
+            ticks: { color: '#666', stepSize: 1 }, grid: { display: false } }
+        }
+      }
+    });
+  }, 100);
+}
+
+// ============ 右侧买入时机 ============
+
+async function runTiming() {
+  const btn = document.getElementById('btnRun');
+  btn.disabled = true; btn.textContent = '⏳ 分析中...';
+  document.getElementById('results').innerHTML = '<div class="loading">正在拉取K线数据并分析右侧买入信号...</div>';
+
+  const code = document.getElementById('timing_code').value.trim();
+  if (!code) { alert('请输入ETF代码'); btn.disabled=false; btn.textContent='▶ 开始回测'; return; }
+
+  const params = new URLSearchParams({ code: code });
+  try {
+    const resp = await fetch('api/buy_timing?' + params.toString());
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail||'Server error'); }
+    const data = await resp.json();
+    renderTiming(data);
+  } catch(e) {
+    document.getElementById('results').innerHTML = `<div class="error-msg">分析失败: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ 开始回测';
+  }
+}
+
+function renderTiming(data) {
+  let scoreColor = data.score >= 80 ? 'var(--green)' : data.score >= 55 ? '#ffa726' : data.score >= 30 ? '#ff9800' : 'var(--red)';
+  
+  let html = `<div class="summary-cards">
+    <div class="card" style="text-align:center;">
+      <h3>${data.code} 右侧买入时机</h3>
+      <div style="font-size:28px;font-weight:700;margin:8px 0;">${data.latest_price}</div>
+      <div style="font-size:11px;color:var(--muted);">${data.latest_date}</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <h3>综合评分</h3>
+      <div style="font-size:36px;font-weight:800;color:${scoreColor};">${data.score}<span style="font-size:14px;">/100</span></div>
+      <div style="font-size:13px;margin-top:6px;line-height:1.5;">${data.verdict}</div>
+    </div>
+  </div>`;
+
+  const icons = { macd: '📊', rsi: '📈', bottom: '🔍', ma: '📐' };
+  const names = { macd: 'MACD金叉', rsi: 'RSI健康回调', bottom: '底部形态确认', ma: '均线拐头' };
+  
+  html += '<div class="summary-cards" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">';
+  for (const [key, detail] of Object.entries(data.details)) {
+    const icon = detail.startsWith('✅') ? '🟢' : detail.startsWith('⚠️') ? '🟡' : '🔴';
+    html += `<div class="card">
+      <h3>${icons[key]} ${names[key]}</h3>
+      <div style="font-size:13px;line-height:1.7;margin-top:6px;">${icon} ${detail}</div>
+    </div>`;
+  }
+  html += '</div>';
+
+  const s = data.signals;
+  html += `<div class="card" style="margin-bottom:16px;">
+    <h3>📋 信号明细</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+      <div class="stat-row"><span>MACD金叉</span><span>${s.macd_golden_cross?'✅ 是'+(s.cross_days_ago!=null?' ('+s.cross_days_ago+'天前)':''):'❌ 否'}</span></div>
+      <div class="stat-row"><span>MACD零轴上方</span><span>${s.macd_positive?'✅ 是':'❌ 否'}${s.macd_converging?' · 收敛中':''}</span></div>
+      <div class="stat-row"><span>RSI(14)</span><span style="color:${s.rsi_now<35?'var(--red)':s.rsi_now>75?'var(--red)':s.rsi_healthy?'var(--green)':'var(--muted)'}">${s.rsi_now}</span></div>
+      <div class="stat-row"><span>RSI健康区间</span><span>${s.rsi_healthy?'✅ 40-65':'❌ 否'}${s.rsi_recovering?' · 回升中':''}</span></div>
+      <div class="stat-row"><span>距52周低点</span><span style="color:${s.dist_from_52w_low>5?'var(--green)':'var(--muted)'}">+${s.dist_from_52w_low}% (低:${s.low_52w})</span></div>
+      <div class="stat-row"><span>二次探底确认</span><span>${s.double_bottom?'✅ 是':'❌ 否'}</span></div>
+      <div class="stat-row"><span>MA20斜率</span><span style="color:${s.ma20_slope>0.5?'var(--green)':s.ma20_slope>-0.5?'var(--muted)':'var(--red)'}">${s.ma20_slope>0?'+':''}${s.ma20_slope}%${s.ma_flattening?' · 走平':''}${s.ma_turning_up?' · 拐头':''}</span></div>
+      <div class="stat-row"><span>价格>MA20/MA60</span><span>${s.above_ma20?'✅MA20 ':''}${s.above_ma60?'✅MA60':''}${!s.above_ma20&&!s.above_ma60?'❌':''}</span></div>
+      <div class="stat-row"><span>MA20>MA60</span><span>${s.ma20_above_ma60?'✅ 多头排列':'❌ 空头排列'}</span></div>
+    </div>
+  </div>`;
+
+  html += `<div class="chart-container">
+    <h3>📈 日K线 + 指标（近250日）</h3>
+    <div class="chart-wrapper" style="height:500px;"><canvas id="timingKlineChart"></canvas></div>
+    <div class="chart-hint">蓝=收盘价 | 橙=MA20 | 紫=MA60 | 绿=MA120 | 🖱滚轮缩放·拖拽平移</div>
+  </div>`;
+
+  html += `<div style="text-align:center;color:var(--muted);font-size:11px;padding:12px;">
+    分析日期: ${data.latest_date} | 数据来源: Wind万得</div>`;
+
+  document.getElementById('results').innerHTML = html;
+  setTimeout(() => drawTimingChart(data.chart), 150);
+}
+
+function drawTimingChart(chart) {
+  const ctx = document.getElementById('timingKlineChart');
+  if (!ctx) return;
+  if (chartInstance) chartInstance.destroy();
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: chart.dates.map(d => d.slice(4,6)+'/'+d.slice(6,8)),
+      datasets: [
+        { label: '收盘价', data: chart.closes, borderColor: '#42a5f5', borderWidth: 1.8, pointRadius: 0, yAxisID: 'y', tension: 0 },
+        { label: 'MA20', data: chart.ma20, borderColor: '#ffa726', borderWidth: 1, pointRadius: 0, yAxisID: 'y', tension: 0 },
+        { label: 'MA60', data: chart.ma60, borderColor: '#ab47bc', borderWidth: 1, pointRadius: 0, yAxisID: 'y', tension: 0 },
+        { label: 'MA120', data: chart.ma120, borderColor: '#66bb6a', borderWidth: 1, pointRadius: 0, yAxisID: 'y', tension: 0 },
+        { label: 'RSI(14)', data: chart.rsi, borderColor: '#26a69a', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y1', tension: 0 },
+        { label: 'MACD柱', data: chart.macd_hist, type: 'bar', yAxisID: 'y2',
+          backgroundColor: ctx => { const v = ctx.raw; return v === null ? 'transparent' : v >= 0 ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)'; } },
+        { label: 'DIF', data: chart.macd_dif, borderColor: '#e1e4ea', borderWidth: 1, pointRadius: 0, yAxisID: 'y2', tension: 0 },
+        { label: 'DEA', data: chart.macd_dea, borderColor: '#ffa726', borderWidth: 0.8, pointRadius: 0, borderDash: [3,3], yAxisID: 'y2', tension: 0 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        zoom: { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }, pan: { enabled: true, mode: 'x' } },
+        legend: { labels: { color: '#8b8fa3', usePointStyle: true, boxWidth: 8, font: { size: 10 } } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      scales: {
+        x: { ticks: { color: '#8b8fa3', maxTicksLimit: 12, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { type: 'linear', position: 'left', title: { text: '价格 ¥', display: true, color: '#8b8fa3' },
+          ticks: { color: '#8b8fa3', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y1: { type: 'linear', position: 'right', min: 0, max: 100,
+          title: { text: 'RSI', display: true, color: '#26a69a' },
+          ticks: { color: '#26a69a', font: { size: 9 }, stepSize: 20 }, grid: { drawOnChartArea: false } },
+        y2: { type: 'linear', position: 'right',
+          title: { text: 'MACD', display: true, color: '#8b8fa3' },
+          ticks: { color: '#8b8fa3', font: { size: 9 } }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+}
+</script>
+</body>
+</html>
