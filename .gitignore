@@ -21,3 +21,10 @@ Thumbs.db
 
 # Cache
 /tmp/etf_backtest_cache/
+
+# Node / Next.js
+node_modules
+.next
+.env.local
+*.tsbuildinfo
+next-env.d.ts
