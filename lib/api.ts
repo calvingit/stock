@@ -154,6 +154,31 @@ export interface StrategyMeta {
   metrics: Record<string, number>;
 }
 
+export interface FrontierPoint {
+  risk: number;
+  return: number;
+  sharpe: number;
+  weights: [number, number, number, number];
+}
+
+export interface PlaneCell {
+  nasdaq: number;
+  bond_ratio: number;
+  bond: number;
+  gold: number;
+  ann_return: number | null;
+  max_drawdown: number | null;
+  sharpe: number | null;
+  calmar: number | null;
+}
+
+export interface PlaneResult {
+  status: string;
+  x_labels: number[];
+  y_labels: number[];
+  grid: Record<string, PlaneCell>;
+}
+
 export interface GradientResult {
   nasdaq: number;
   bond: number;
@@ -200,6 +225,23 @@ export const api = {
       rebalance: params.rebalance || 'annual',
       begin: params.start_date || '2022-12-14',
       end: params.end_date || '2026-06-30',
+    }),
+
+  // Asset allocation parameter plane heatmap
+  allocationPlane: (params: { rebalance?: string; start_date?: string; end_date?: string }) =>
+    fetchAPI<PlaneResult>('asset_allocation/plane', {
+      rebalance: params.rebalance || 'annual',
+      begin: params.start_date || '2022-12-14',
+      end: params.end_date || '2026-06-30',
+    }),
+
+  // Asset allocation efficient frontier
+  allocationFrontier: (params: { rebalance?: string; start_date?: string; end_date?: string; samples?: number }) =>
+    fetchAPI<{ points: FrontierPoint[] }>('asset_allocation/frontier', {
+      rebalance: params.rebalance || 'annual',
+      begin: params.start_date || '2022-12-14',
+      end: params.end_date || '2026-06-30',
+      samples: params.samples || 200,
     }),
 
   // Backtest detail
