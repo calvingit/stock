@@ -3,6 +3,7 @@ ETF均线策略回测工具 - FastAPI后端
 数据来源: 万得Wind金融数据
 """
 import json
+import math
 import subprocess
 import os
 from collections import Counter
@@ -48,12 +49,14 @@ def fetch_kline(etf_code: str, begin: str, end: str) -> dict:
         if result.returncode != 0:
             return {}
         
-        outer = json.loads(result.stdout)
-        inner = json.loads(outer["content"][0]["text"])
+        outer = json.loads(result.stdout, strict=False)
+        inner = json.loads(outer["content"][0]["text"], strict=False)
         if inner.get("error"):
             return {}
         
         rows = inner["data"]["rows"]
+        # Filter out rows with INVALID prices/volumes (e.g., before ETF listing date)
+        rows = [r for r in rows if r[2] != 'INVALID' and r[6] != 'INVALID']
         closes = [float(r[2]) for r in rows]
         volumes = [float(r[6]) for r in rows]
         dates = [r[-1] for r in rows]
@@ -183,8 +186,8 @@ def fetch_weekly(etf_code: str, begin: str, end: str) -> dict:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=WIND_CLI_DIR)
         if result.returncode != 0:
             return {}
-        outer = json.loads(result.stdout)
-        inner = json.loads(outer["content"][0]["text"])
+        outer = json.loads(result.stdout, strict=False)
+        inner = json.loads(outer["content"][0]["text"], strict=False)
         if inner.get("error"):
             return {}
         rows = inner["data"]["rows"]
@@ -1655,6 +1658,239 @@ async def buy_timing(
         "verdict": verdict,
         "chart": chart_data,
     })
+
+
+# ============ 资产配置 ============
+
+ASSET_ALLOCATION_CODES = {
+    "159941.SZ": "纳指100",
+    "515100.SH": "红利低波100",
+    "511580.SH": "政金债",
+    "518880.SH": "黄金",
+}
+
+def run_asset_allocation(weights: list, rebalance_mode: str, rebalance_param: float,
+                         begin: str, end: str, initial_capital: float = 1000000):
+    """
+    Simulate fixed-weight asset allocation with rebalancing.
+    Returns: nav_series, individual_navs, stats, correlation matrix
+    """
+    # Pull data for all 4 ETFs
+    prices_dict = {}
+    dates_dict = {}
+    for code in ASSET_ALLOCATION_CODES:
+        data = fetch_kline(code, begin, end)
+        if not data or not data.get("closes"):
+            return None
+        prices_dict[code] = data["closes"]
+        dates_dict[code] = data["dates"]
+
+    # Align on common dates
+    common_idx = {}
+    codes_list = list(ASSET_ALLOCATION_CODES.keys())
+    date_index = {}
+    for code in codes_list:
+        for i, d in enumerate(dates_dict[code]):
+            if d not in date_index:
+                date_index[d] = {}
+            date_index[d][code] = prices_dict[code][i]
+
+    common_dates = sorted(d for d in date_index if all(c in date_index[d] for c in codes_list))
+    if len(common_dates) < 2:
+        return None
+
+    prices = {code: [date_index[d][code] for d in common_dates] for code in codes_list}
+
+    # Calculate daily returns and correlation
+    daily_returns = {}
+    for code in codes_list:
+        r = [(prices[code][i] - prices[code][i-1]) / prices[code][i-1]
+             for i in range(1, len(common_dates))]
+        daily_returns[code] = r
+
+    def correlation(x, y):
+        n = len(x); mx = sum(x)/n; my = sum(y)/n
+        sx = math.sqrt(sum((v-mx)**2 for v in x)/n)
+        sy = math.sqrt(sum((v-my)**2 for v in y)/n)
+        if sx == 0 or sy == 0: return 0
+        return sum((x[i]-mx)*(y[i]-my) for i in range(n)) / (n * sx * sy)
+
+    corr_matrix = {}
+    for c1 in codes_list:
+        corr_matrix[c1] = {}
+        for c2 in codes_list:
+            corr_matrix[c1][c2] = round(correlation(daily_returns[c1], daily_returns[c2]), 4)
+
+    # Individual ETF cumulative returns (for chart)
+    individual_navs = {}
+    for code in codes_list:
+        nav = [initial_capital * weights[codes_list.index(code)]]
+        cum = 1.0
+        for i in range(1, len(common_dates)):
+            cum *= (1 + daily_returns[code][i-1])
+            nav.append(initial_capital * weights[codes_list.index(code)] * cum)
+        individual_navs[code] = [round(v, 2) for v in nav]
+
+    # Portfolio simulation
+    capital = 0.0
+    shares = [0.0] * 4
+    w = weights.copy()
+
+    # Day 0: initial buy
+    total_value = initial_capital
+    for j in range(4):
+        shares[j] = total_value * w[j] / prices[codes_list[j]][0]
+    portfolio_navs = [total_value]
+    rebalance_dates = [common_dates[0]]
+    prev_rebalance = 0
+    rebalance_count = 1
+
+    freq_days = None
+    threshold = None
+    if rebalance_mode == "monthly":
+        freq_days = 21
+    elif rebalance_mode == "quarterly":
+        freq_days = 63
+    elif rebalance_mode == "semiannual":
+        freq_days = 126
+    elif rebalance_mode == "annual":
+        freq_days = 252
+    elif rebalance_mode == "threshold":
+        threshold = rebalance_param / 100.0
+    # "none" = never rebalance
+
+    for i in range(1, len(common_dates)):
+        total_value = capital
+        for j in range(4):
+            total_value += shares[j] * prices[codes_list[j]][i]
+
+        need_rebalance = False
+        if freq_days and i - prev_rebalance >= freq_days:
+            need_rebalance = True
+        elif threshold:
+            if total_value > 0:
+                for j in range(4):
+                    asset_val = shares[j] * prices[codes_list[j]][i]
+                    actual_w = asset_val / total_value
+                    if abs(actual_w - w[j]) > threshold:
+                        need_rebalance = True
+                        break
+
+        if need_rebalance:
+            total_value_snap = total_value
+            capital = 0
+            for j in range(4):
+                shares[j] = total_value_snap * w[j] / prices[codes_list[j]][i]
+            prev_rebalance = i
+            rebalance_count += 1
+            rebalance_dates.append(common_dates[i])
+
+        portfolio_navs.append(total_value)
+
+    # Stats
+    total_ret = (portfolio_navs[-1] / portfolio_navs[0] - 1) * 100
+    yrs = len(portfolio_navs) / 252
+    ann_ret = ((portfolio_navs[-1] / portfolio_navs[0]) ** (1/yrs) - 1) * 100 if yrs > 0 else 0
+
+    peak = portfolio_navs[0]
+    maxdd = 0
+    dd_start = dd_end = common_dates[0]
+    for idx, v in enumerate(portfolio_navs):
+        peak = max(peak, v)
+        dd = (v - peak) / peak
+        if dd < maxdd:
+            maxdd = dd
+            dd_end = common_dates[idx]
+
+    daily_r = [(portfolio_navs[i] - portfolio_navs[i-1]) / portfolio_navs[i-1]
+               for i in range(1, len(portfolio_navs))]
+    mean_daily = sum(daily_r) / len(daily_r) if daily_r else 0
+    vol = math.sqrt(sum((r - mean_daily) ** 2 for r in daily_r) / len(daily_r)) * math.sqrt(252) * 100
+    sharpe = (ann_ret - 2) / vol if vol > 0 else 0
+    calmar = ann_ret / abs(maxdd * 100) if maxdd != 0 else 0
+
+    # Annual returns
+    annual_returns = {}
+    year_start_val = portfolio_navs[0]
+    year_start_date = common_dates[0][:4]
+    for idx, d in enumerate(common_dates):
+        yr = d[:4]
+        if yr != year_start_date:
+            annual_returns[year_start_date] = round((portfolio_navs[idx-1] / year_start_val - 1) * 100, 2)
+            year_start_val = portfolio_navs[idx]
+            year_start_date = yr
+    annual_returns[year_start_date] = round((portfolio_navs[-1] / year_start_val - 1) * 100, 2)
+
+    # Individual ETF annualized stats
+    etf_stats = {}
+    for idx, code in enumerate(codes_list):
+        r = daily_returns[code]
+        ann_r = (sum(r) / len(r)) * 252 * 100
+        v = math.sqrt(sum((x - sum(r)/len(r))**2 for x in r) / len(r)) * math.sqrt(252) * 100
+        s = (ann_r - 2) / v if v > 0 else 0
+        cum = 1.0; pk = 1.0; mdd = 0
+        for ri in r:
+            cum *= (1+ri); pk = max(pk, cum); mdd = min(mdd, (cum-pk)/pk)
+        etf_stats[code] = {
+            "name": ASSET_ALLOCATION_CODES[code],
+            "ann_ret": round(ann_r, 2),
+            "volatility": round(v, 1),
+            "sharpe": round(s, 2),
+            "max_dd": round(mdd * 100, 2),
+        }
+
+    return {
+        "weights": {ASSET_ALLOCATION_CODES[c]: round(w[i]*100, 1) for i, c in enumerate(codes_list)},
+        "rebalance_mode": rebalance_mode,
+        "rebalance_param": rebalance_param,
+        "rebalance_count": rebalance_count,
+        "rebalance_dates": rebalance_dates,
+        "total_return": round(total_ret, 2),
+        "ann_return": round(ann_ret, 2),
+        "max_drawdown": round(maxdd * 100, 2),
+        "volatility": round(vol, 1),
+        "sharpe": round(sharpe, 2),
+        "calmar": round(calmar, 2),
+        "dates": common_dates,
+        "nav_series": [round(v, 2) for v in portfolio_navs],
+        "individual_navs": {ASSET_ALLOCATION_CODES[c]: individual_navs[c] for c in codes_list},
+        "correlation": corr_matrix,
+        "etf_stats": etf_stats,
+        "annual_returns": annual_returns,
+    }
+
+
+@app.get("/api/asset_allocation")
+async def asset_allocation(
+    w1: float = Query(25, ge=0, le=100, description="纳指100权重%"),
+    w2: float = Query(25, ge=0, le=100, description="红利低波100权重%"),
+    w3: float = Query(25, ge=0, le=100, description="政金债权重%"),
+    w4: float = Query(25, ge=0, le=100, description="黄金权重%"),
+    rebalance: str = Query("annual", description="再平衡模式: none|monthly|quarterly|semiannual|annual|threshold"),
+    threshold: float = Query(5, ge=1, le=30, description="阈值再平衡偏离%(仅threshold模式)"),
+    begin: str = Query("2022-12-14"),
+    end: str = Query("2026-06-30"),
+    initial_capital: float = Query(1000000),
+):
+    """固定比例资产配置 + 再平衡回测"""
+    weights = [w1/100, w2/100, w3/100, w4/100]
+
+    # Validate weights sum
+    total_w = sum(weights)
+    if abs(total_w - 1.0) > 0.001:
+        # Auto-normalize
+        weights = [w / total_w for w in weights]
+
+    if rebalance not in ("none", "monthly", "quarterly", "semiannual", "annual", "threshold"):
+        raise HTTPException(400, f"Invalid rebalance mode: {rebalance}")
+
+    rebalance_param = threshold if rebalance == "threshold" else 0
+    result = run_asset_allocation(weights, rebalance, rebalance_param, begin, end, initial_capital)
+
+    if result is None:
+        raise HTTPException(500, "数据获取失败或日期范围无共同交易日")
+
+    return JSONResponse(result)
 
 
 # 静态文件

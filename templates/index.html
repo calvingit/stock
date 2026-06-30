@@ -103,6 +103,7 @@
     <button class="tab-btn" onclick="switchMode('rsi')">📈 RSI趋势（周线）</button>
     <button class="tab-btn" onclick="switchMode('rotation')">🔄 行业轮动</button>
     <button class="tab-btn" onclick="switchMode('timing')">🎯 右侧买入时机</button>
+    <button class="tab-btn" onclick="switchMode('allocation')">🏛️ 资产配置</button>
   </div>
 
   <!-- ETF模式输入 -->
@@ -301,6 +302,44 @@
     </div>
   </div>
 
+  <!-- 资产配置模式 -->
+  <div id="allocation-mode" style="display:none;">
+    <div class="form-grid">
+      <div class="form-group"><label>纳指100 (159941) 权重%</label><input type="number" id="aa_w1" value="25" min="0" max="100"></div>
+      <div class="form-group"><label>红利低波100 (515100) 权重%</label><input type="number" id="aa_w2" value="25" min="0" max="100"></div>
+      <div class="form-group"><label>政金债 (511580) 权重%</label><input type="number" id="aa_w3" value="25" min="0" max="100"></div>
+      <div class="form-group"><label>黄金 (518880) 权重%</label><input type="number" id="aa_w4" value="25" min="0" max="100"></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label>再平衡模式</label>
+        <select id="aa_rebalance" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;">
+          <option value="monthly">每月</option>
+          <option value="quarterly">每季</option>
+          <option value="semiannual">每半年</option>
+          <option value="annual" selected>每年</option>
+          <option value="threshold">阈值触发</option>
+          <option value="none">不再平衡</option>
+        </select>
+      </div>
+      <div class="form-group" id="aa_threshold_group" style="display:none;"><label>偏离阈值%</label><input type="number" id="aa_threshold" value="5" min="1" max="30"></div>
+      <div class="form-group"><label>起始日期</label><input type="date" id="aa_begin" value="2022-12-14"></div>
+      <div class="form-group"><label>结束日期</label><input type="date" id="aa_end" value="2026-06-30"></div>
+      <div class="form-group"><label>初始资金</label><input type="number" id="aa_capital" value="1000000"></div>
+    </div>
+    <div class="presets">
+      <span style="color:var(--muted);font-size:11px;padding:5px 0;">预设:</span>
+      <button class="preset-btn active" onclick="applyAAPreset('equal')">等权(25/25/25/25)</button>
+      <button class="preset-btn" onclick="applyAAPreset('growth')">成长(30/20/30/20)</button>
+      <button class="preset-btn" onclick="applyAAPreset('balanced')">均衡(20/25/35/20)</button>
+      <button class="preset-btn" onclick="applyAAPreset('defensive')">保守(15/20/45/20)</button>
+    </div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:12px;line-height:1.6;">
+      🏛️ <b>跨资产低相关配置</b>：纳指(美股成长) + 红利低波(A股价值) + 政金债(利率债) + 黄金(商品)<br>
+      📊 四资产相关系数全部 &lt;0.20，政金债与纳指/黄金近乎零相关<br>
+      💡 再平衡 = 卖出涨多的 + 买入跌多的，自动实现"低买高卖"
+    </div>
+  </div>
+
   <button class="btn-run" id="btnRun" onclick="runBacktest()">▶ 开始回测</button>
 
   <div id="results"></div>
@@ -323,6 +362,7 @@ function switchMode(m) {
   document.getElementById('rsi-mode').style.display = m==='rsi'?'block':'none';
   document.getElementById('rotation-mode').style.display = m==='rotation'?'block':'none';
   document.getElementById('timing-mode').style.display = m==='timing'?'block':'none';
+  document.getElementById('allocation-mode').style.display = m==='allocation'?'block':'none';
   document.getElementById('results').innerHTML = '';
 }
 
@@ -492,6 +532,19 @@ async function runBacktest() {
       code: document.getElementById('timing_code').value.trim(),
     });
     var apiPath = 'api/buy_timing';
+  } else if (currentMode === 'allocation') {
+    params = new URLSearchParams({
+      w1: document.getElementById('aa_w1').value,
+      w2: document.getElementById('aa_w2').value,
+      w3: document.getElementById('aa_w3').value,
+      w4: document.getElementById('aa_w4').value,
+      rebalance: document.getElementById('aa_rebalance').value,
+      threshold: document.getElementById('aa_threshold').value,
+      begin: document.getElementById('aa_begin').value,
+      end: document.getElementById('aa_end').value,
+      initial_capital: document.getElementById('aa_capital').value,
+    });
+    var apiPath = 'api/asset_allocation';
   } else {
     const rows = document.querySelectorAll('#strategy-rows .strategy-row');
     const sets = [];
@@ -525,6 +578,8 @@ async function runBacktest() {
       renderRotationResults(data);
     } else if (data.signals) {
       renderTiming(data);
+    } else if (data.nav_series && data.individual_navs) {
+      renderAllocation(data);
     } else {
       renderResults(data);
     }
@@ -965,6 +1020,178 @@ function drawTimingChart(chart) {
         y2: { type: 'linear', position: 'right',
           title: { text: 'MACD', display: true, color: '#8b8fa3' },
           ticks: { color: '#8b8fa3', font: { size: 9 } }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+}
+
+// ============ 资产配置 ============
+const AA_COLORS = ['#5c6bc0','#26a69a','#ffa726','#ef5350'];
+const AA_NAMES = ['纳指100','红利低波100','政金债','黄金'];
+
+function applyAAPreset(name) {
+  const presets = {
+    equal:   [25,25,25,25],
+    growth:  [30,20,30,20],
+    balanced:[20,25,35,20],
+    defensive:[15,20,45,20],
+  };
+  const p = presets[name];
+  ['aa_w1','aa_w2','aa_w3','aa_w4'].forEach((id,i) => document.getElementById(id).value = p[i]);
+  document.querySelectorAll('#allocation-mode .preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+// Show/hide threshold input based on rebalance mode
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('aa_rebalance');
+  if (sel) sel.addEventListener('change', function() {
+    document.getElementById('aa_threshold_group').style.display = this.value === 'threshold' ? '' : 'none';
+  });
+});
+
+function renderAllocation(data) {
+  document.getElementById('results').innerHTML = '';
+  const d = data;
+  const cls = v => v >= 0 ? 'positive' : 'negative';
+
+  // Stats cards
+  let statsHTML = '<div class="summary-cards">';
+  statsHTML += `<div class="card">
+    <h3>📊 组合总览</h3>
+    <div class="stat-row"><span>总收益</span><span class="stat-val ${cls(d.total_return)}">${d.total_return > 0 ? '+' : ''}${d.total_return}%</span></div>
+    <div class="stat-row"><span>年化收益</span><span class="stat-val ${cls(d.ann_return)}">${d.ann_return > 0 ? '+' : ''}${d.ann_return}%</span></div>
+    <div class="stat-row"><span>最大回撤</span><span class="stat-val negative">${d.max_drawdown}%</span></div>
+    <div class="stat-row"><span>年化波动</span><span class="stat-val">${d.volatility}%</span></div>
+    <div class="stat-row"><span>Sharpe</span><span class="stat-val">${d.sharpe}</span></div>
+    <div class="stat-row"><span>Calmar</span><span class="stat-val">${d.calmar}</span></div>
+  </div>`;
+
+  // Weights
+  statsHTML += `<div class="card">
+    <h3>⚖️ 配置比例</h3>`;
+  for (const [name, w] of Object.entries(d.weights)) {
+    statsHTML += `<div class="stat-row"><span>${name}</span><span class="stat-val">${w}%</span></div>`;
+  }
+  statsHTML += `<div class="stat-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;"><span>再平衡模式</span><span class="stat-val">${d.rebalance_mode==='annual'?'每年':d.rebalance_mode==='quarterly'?'每季':d.rebalance_mode==='monthly'?'每月':d.rebalance_mode==='semiannual'?'每半年':d.rebalance_mode==='threshold'?'阈值'+d.rebalance_param+'%':d.rebalance_mode==='none'?'不调整':d.rebalance_mode}</span></div>`;
+  statsHTML += `<div class="stat-row"><span>再平衡次数</span><span class="stat-val">${d.rebalance_count}次</span></div>`;
+  statsHTML += '</div>';
+
+  // Individual ETF stats
+  statsHTML += `<div class="card">
+    <h3>📈 单资产表现</h3>
+    <table style="width:100%;font-size:11px;border-collapse:collapse;">
+    <tr style="color:var(--muted);"><th style="text-align:left;">资产</th><th>年化</th><th>波动</th><th>回撤</th><th style="text-align:right;">Sharpe</th></tr>`;
+  for (const [code, s] of Object.entries(d.etf_stats)) {
+    statsHTML += `<tr><td>${s.name}</td>
+      <td class="${cls(s.ann_ret)}">${s.ann_ret>0?'+':''}${s.ann_ret}%</td>
+      <td>${s.volatility}%</td>
+      <td class="negative">${s.max_dd}%</td>
+      <td style="text-align:right;">${s.sharpe}</td></tr>`;
+  }
+  statsHTML += '</table></div>';
+
+  // Annual returns
+  statsHTML += `<div class="card">
+    <h3>📅 年度收益</h3>
+    <table style="width:100%;font-size:11px;border-collapse:collapse;">
+    <tr style="color:var(--muted);"><th style="text-align:left;">年份</th><th style="text-align:right;">收益</th></tr>`;
+  for (const [yr, ret] of Object.entries(d.annual_returns)) {
+    statsHTML += `<tr><td>${yr}</td><td class="${cls(ret)}" style="text-align:right;">${ret>0?'+':''}${ret}%</td></tr>`;
+  }
+  statsHTML += '</table></div>';
+  statsHTML += '</div>'; // end summary-cards
+
+  // Correlation heatmap
+  statsHTML += `<div class="card" style="margin-bottom:20px;">
+    <h3>🔗 相关性矩阵（日收益）</h3>
+    <table style="width:100%;font-size:12px;border-collapse:collapse;text-align:center;">
+    <tr style="color:var(--muted);"><th></th>`;
+  for (const name of AA_NAMES) statsHTML += `<th>${name}</th>`;
+  statsHTML += '</tr>';
+  const codes_order = Object.keys(d.etf_stats);
+  for (const c1 of codes_order) {
+    statsHTML += `<tr><td style="text-align:left;color:var(--muted);">${d.etf_stats[c1].name}</td>`;
+    for (const c2 of codes_order) {
+      const v = (d.correlation[c1]||{})[c2];
+      const bg = v === 1 ? 'var(--accent)' : v > 0.3 ? 'rgba(38,166,154,0.3)' : v > 0 ? 'rgba(38,166,154,0.1)' : 'rgba(239,83,80,0.2)';
+      statsHTML += `<td style="background:${bg};padding:6px;">${v != null ? v.toFixed(2) : '-'}</td>`;
+    }
+    statsHTML += '</tr>';
+  }
+  statsHTML += '</table></div>';
+
+  document.getElementById('results').innerHTML = statsHTML;
+
+  // Chart
+  const chartDiv = document.createElement('div');
+  chartDiv.className = 'chart-container';
+  chartDiv.innerHTML = `<h3>📈 组合净值 vs 单资产净值</h3>
+    <div class="chart-wrapper"><canvas id="aaChart"></canvas></div>
+    <div class="chart-hint">🖱️ 滚轮缩放 | 拖拽平移</div>`;
+  document.getElementById('results').appendChild(chartDiv);
+
+  const ctx = document.getElementById('aaChart').getContext('2d');
+  if (chartInstance) chartInstance.destroy();
+
+  const labels = d.dates.map(dd => dd.slice(0,10));
+  const datasets = [];
+
+  // Individual assets
+  for (let i = 0; i < AA_NAMES.length; i++) {
+    const name = AA_NAMES[i];
+    const navs = d.individual_navs[name];
+    if (navs) {
+      datasets.push({
+        label: name,
+        data: navs,
+        borderColor: AA_COLORS[i],
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderDash: [4, 3],
+        pointRadius: 0,
+        tension: 0,
+      });
+    }
+  }
+
+  // Portfolio NAV
+  datasets.push({
+    label: '组合',
+    data: d.nav_series,
+    borderColor: '#ffffff',
+    backgroundColor: 'transparent',
+    borderWidth: 2.5,
+    pointRadius: 0,
+    tension: 0,
+  });
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        zoom: { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }, pan: { enabled: true, mode: 'x' } },
+        legend: { labels: { color: '#8b8fa3', usePointStyle: true, boxWidth: 8, font: { size: 10 } } },
+        tooltip: {
+          mode: 'index', intersect: false,
+          callbacks: {
+            label: ctx => {
+              let val = ctx.raw;
+              if (val == null) return '';
+              return `${ctx.dataset.label}: ¥${val.toLocaleString('zh-CN')}`;
+            }
+          }
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#8b8fa3', maxTicksLimit: 12, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { type: 'linear', position: 'left',
+          title: { text: '净值 ¥', display: true, color: '#8b8fa3' },
+          ticks: { color: '#8b8fa3', font: { size: 10 }, callback: v => '¥'+(v/10000).toFixed(0)+'万' },
+          grid: { color: 'rgba(255,255,255,0.06)' } },
       },
     },
   });
