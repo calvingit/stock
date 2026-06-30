@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { EquityChart } from '@/components/charts/EquityChart';
 import { DrawdownChart } from '@/components/charts/DrawdownChart';
 import { HeatmapChart } from '@/components/charts/HeatmapChart';
@@ -29,6 +29,8 @@ export default function AssetAllocationPage() {
   const [plane, setPlane] = useState<PlaneResult | null>(null);
   const [frontier, setFrontier] = useState<FrontierPoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingPlane, setLoadingPlane] = useState(false);
+  const [loadingFrontier, setLoadingFrontier] = useState(false);
   const [tab, setTab] = useState<'config' | 'plane' | 'frontier'>('config');
 
   const remaining = 100 - params.nasdaq;
@@ -51,22 +53,51 @@ export default function AssetAllocationPage() {
     }
   };
 
-  const loadAnalysis = async () => {
+  // Load gradient on mount and when rebalance changes
+  const loadGradient = useCallback(async () => {
     try {
-      const [g, p, f] = await Promise.all([
-        api.allocationGradient({ rebalance: params.rebalance }),
-        api.allocationPlane({ rebalance: params.rebalance }),
-        api.allocationFrontier({ rebalance: params.rebalance, samples: 200 }),
-      ]);
+      const g = await api.allocationGradient({ rebalance: params.rebalance });
       setGradient(g.results);
-      setPlane(p);
-      setFrontier(f.points);
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [params.rebalance]);
 
-  useEffect(() => { loadAnalysis(); }, [params.rebalance]);
+  useEffect(() => { loadGradient(); }, [loadGradient]);
+
+  // Lazy-load plane only when tab is clicked
+  const loadPlane = useCallback(async () => {
+    if (plane || loadingPlane) return;
+    setLoadingPlane(true);
+    try {
+      const p = await api.allocationPlane({ rebalance: params.rebalance });
+      setPlane(p);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingPlane(false);
+    }
+  }, [plane, loadingPlane, params.rebalance]);
+
+  // Lazy-load frontier only when tab is clicked
+  const loadFrontier = useCallback(async () => {
+    if (frontier.length > 0 || loadingFrontier) return;
+    setLoadingFrontier(true);
+    try {
+      const f = await api.allocationFrontier({ rebalance: params.rebalance, samples: 200 });
+      setFrontier(f.points);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingFrontier(false);
+    }
+  }, [frontier, loadingFrontier, params.rebalance]);
+
+  const handleTabChange = (t: 'config' | 'plane' | 'frontier') => {
+    setTab(t);
+    if (t === 'plane') loadPlane();
+    if (t === 'frontier') loadFrontier();
+  };
 
   const equityCurve = result ? getEquityCurve(result) : [];
   const drawdownCurve = result ? getDrawdownCurve(result) : [];
@@ -106,9 +137,11 @@ export default function AssetAllocationPage() {
       {/* Tab navigation */}
       <div className="flex gap-1 p-1 rounded-lg bg-secondary w-fit">
         {(['config', 'plane', 'frontier'] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)}
+          <button key={t} onClick={() => handleTabChange(t)}
             className={`px-4 py-1.5 text-sm rounded-md transition ${tab === t ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>
             {{ config: '⚙️ 配置回测', plane: '🗺️ 参数平面', frontier: '📈 有效前沿' }[t]}
+            {t === 'plane' && loadingPlane && ' ⏳'}
+            {t === 'frontier' && loadingFrontier && ' ⏳'}
           </button>
         ))}
       </div>
@@ -195,7 +228,14 @@ export default function AssetAllocationPage() {
                 title=""
                 height={350}
               />
-            ) : <div className="text-sm text-muted-foreground">计算中...</div>}
+            ) : (
+              <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                <div className="text-center">
+                  <div className="text-2xl mb-2">⏳</div>
+                  <div className="text-sm">计算中... (54组参数组合)</div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Gradient table */}
@@ -257,7 +297,16 @@ export default function AssetAllocationPage() {
             <p className="text-xs text-muted-foreground mb-3">
               200组随机权重 · X轴=波动率 · Y轴=年化收益 · 颜色=Sharpe(绿{'>'}1.5, 黄{'>'}1)
             </p>
-            <ScatterChart data={frontierData} xLabel="波动率 %" yLabel="年化 %" title="" height={400} />
+            {loadingFrontier ? (
+              <div className="flex items-center justify-center h-[400px] text-muted-foreground">
+                <div className="text-center">
+                  <div className="text-2xl mb-2">⏳</div>
+                  <div className="text-sm">计算中... (200组随机权重)</div>
+                </div>
+              </div>
+            ) : (
+              <ScatterChart data={frontierData} xLabel="波动率 %" yLabel="年化 %" title="" height={400} />
+            )}
           </div>
 
           {/* Top Sharpe table */}
