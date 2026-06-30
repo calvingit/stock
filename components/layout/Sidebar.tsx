@@ -12,6 +12,7 @@ const navItems = [
   { href: '/industry-rotation', label: '🏭 行业轮动' },
   { href: '/asset-allocation', label: '🏛️ 资产配置' },
   { href: '/buy-timing', label: '🎯 右侧买入' },
+  { href: '/strategy-supermarket', label: '🛒 策略超市' },
 ];
 
 export function Sidebar() {

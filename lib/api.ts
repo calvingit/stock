@@ -3,6 +3,18 @@ const API_BASE = '/api/api';
 
 export interface BacktestParams {
   mode?: 'etf' | 'strategy';
+  codes?: string;
+  fast_ma?: number;
+  mid_ma?: number;
+  slow_ma?: number;
+  hard_stop?: number;
+  trail_stop?: number;
+  initial_capital?: number;
+  volume_confirm?: number;
+  pause_after_losses?: number;
+  strategy_sets?: string;
+  begin?: string;
+  end?: string;
   short_ma?: number;
   long_ma?: number;
   signal_ma?: number;
@@ -16,28 +28,60 @@ export interface BacktestParams {
   slippage?: number;
 }
 
-export interface BacktestResult {
-  status: string;
-  cumulative_return: number;
-  annual_return: number;
-  max_drawdown: number;
-  sharpe_ratio: number;
-  calmar_ratio: number;
-  equity_curve: [string, number][];
+export interface BacktestResultItem {
+  code: string;
+  final_value: number;
+  total_return: number; // percentage
+  buy_hold_return: number;
+  alpha: number;
+  trade_count: number;
+  win_rate: number;
+  avg_gain: number;
+  worst_trade: number;
+  max_drawdown: number; // percentage (positive number like 24.97)
+  sharpe_approx: number;
+  skipped_volume: number;
+  skipped_pause: number;
+  gains: number[];
+  nav_series: number[];
+  closes: number[];
+  min_days: number;
+  marks: { idx: number; type: string; price: number }[];
+  trade_summary: number;
+  equity_curve: [string, number][]; // dates are YYYYMMDD
   drawdown_curve: [string, number][];
-  trades: TradeRecord[];
-  summary: Record<string, unknown>;
+  label?: string;
+  strategy_params?: Record<string, number>;
+  error?: string;
+}
+
+export interface BacktestResult {
+  mode: string;
+  params: Record<string, number | string>;
+  period: string;
+  results: BacktestResultItem[];
+}
+
+// Helper: convert YYYYMMDD to YYYY-MM-DD
+export function fmtDate(d: string): string {
+  return d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d;
+}
+
+// Helper: normalize equity curve dates
+export function normEquityCurve(data: [string, number][]): [string, number][] {
+  return data.map(([d, v]) => [fmtDate(d), v]);
 }
 
 export interface TradeRecord {
   date: string;
   code: string;
-  name: string;
+  name?: string;
   action: 'buy' | 'sell';
   price: number;
   shares?: number;
   reason?: string;
   pnl?: number;
+  idx?: number;
 }
 
 export interface AssetAllocationParams {
@@ -51,18 +95,37 @@ export interface AssetAllocationParams {
 }
 
 export interface AssetAllocationResult {
-  status: string;
-  annual_return: number;
-  volatility: number;
-  max_drawdown: number;
-  sharpe_ratio: number;
-  calmar_ratio: number;
+  status?: string;
+  ann_return: number;  // 年化收益率 (百分比, 如 24.61)
+  volatility: number;  // 波动率 (百分比)
+  max_drawdown: number;  // 最大回撤 (百分比, 如 -12.62)
+  sharpe: number;
+  calmar: number;
+  total_return: number;  // 总收益百分比
   final_value: number;
   rebalance_count: number;
-  equity_curve: [string, number][];
-  drawdown_curve: [string, number][];
-  yearly_returns: Record<string, number>;
-  correlation_matrix: Record<string, Record<string, number>>;
+  nav_series: number[];  // 净值序列
+  dates: string[];  // 日期序列 (YYYYMMDD)
+  annual_returns: Record<string, number>;  // 年度收益 (百分比)
+  correlation: Record<string, Record<string, number>>;
+  individual_navs?: Record<string, number[]>;
+  weights?: Record<string, number>;
+}
+
+// Helper to get equity curve in [date, value] format
+export function getEquityCurve(result: AssetAllocationResult): [string, number][] {
+  return result.dates.map((d, i) => [d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6), result.nav_series[i]]);
+}
+
+// Helper to get drawdown curve
+export function getDrawdownCurve(result: AssetAllocationResult): [string, number][] {
+  const nav = result.nav_series;
+  let peak = nav[0];
+  return result.dates.map((d, i) => {
+    peak = Math.max(peak, nav[i]);
+    const dd = (nav[i] - peak) / peak;
+    return [d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6), dd] as [string, number];
+  });
 }
 
 async function fetchAPI<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
@@ -79,6 +142,27 @@ async function fetchAPI<T>(path: string, params: Record<string, string | number 
     throw new Error(error.error || `API error: ${res.status}`);
   }
   return res.json();
+}
+
+// Strategy metadata
+export interface StrategyMeta {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  best_params: Record<string, number | string>;
+  metrics: Record<string, number>;
+}
+
+export interface GradientResult {
+  nasdaq: number;
+  bond: number;
+  gold: number;
+  annual_return: number | null;
+  max_drawdown: number | null;
+  sharpe_ratio: number | null;
+  calmar_ratio: number | null;
+  final_value: number | null;
 }
 
 export const api = {
@@ -106,4 +190,19 @@ export const api = {
       start_date: params.start_date,
       end_date: params.end_date,
     }),
+
+  // Strategy metadata
+  strategies: () => fetchAPI<{ strategies: StrategyMeta[] }>('strategies'),
+
+  // Asset allocation gradient
+  allocationGradient: (params: { rebalance?: string; start_date?: string; end_date?: string }) =>
+    fetchAPI<{ results: GradientResult[] }>('asset_allocation/gradient', {
+      rebalance: params.rebalance || 'annual',
+      begin: params.start_date || '2022-12-14',
+      end: params.end_date || '2026-06-30',
+    }),
+
+  // Backtest detail
+  backtestDetail: (params: BacktestParams) => fetchAPI<BacktestResult>('backtest/detail', params as Record<string, string | number | boolean | undefined>),
 };
+
