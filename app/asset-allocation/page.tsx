@@ -37,7 +37,7 @@ export default function AssetAllocationPage() {
   const bond = Math.floor(remaining / 2);
   const gold = remaining - bond;
 
-  const runAllocation = async () => {
+  const runAllocation = useCallback(async () => {
     if (params.nasdaq === 100) return;
     setLoading(true);
     try {
@@ -51,7 +51,10 @@ export default function AssetAllocationPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [params.nasdaq, params.rebalance]);
+
+  // Auto-run on mount and when params change
+  useEffect(() => { runAllocation(); }, [runAllocation]);
 
   // Load gradient on mount and when rebalance changes
   const loadGradient = useCallback(async () => {

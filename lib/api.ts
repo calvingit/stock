@@ -128,7 +128,7 @@ export function getDrawdownCurve(result: AssetAllocationResult): [string, number
   });
 }
 
-async function fetchAPI<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
+export async function fetchAPI<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined) searchParams.set(key, String(value));

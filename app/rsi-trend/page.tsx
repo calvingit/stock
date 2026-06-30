@@ -1,21 +1,80 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { EquityChart } from '@/components/charts/EquityChart';
 import { DrawdownChart } from '@/components/charts/DrawdownChart';
-import { useBacktest, getItem, getEquityCurve, getDrawdownCurve } from '@/lib/useBacktest';
 import { Slider } from '@/components/ui/Slider';
+import { fetchAPI } from '@/lib/api';
+
+interface RSIResultItem {
+  code: string;
+  total_return: number;
+  max_drawdown: number;
+  sharpe_approx: number;
+  trade_count: number;
+  win_rate: number;
+  nav_series: number[];
+  closes: number[];
+  daily_dates?: string[];
+  [key: string]: unknown;
+}
+
+interface RSIResult {
+  mode: string;
+  results: RSIResultItem[];
+  period?: string;
+  [key: string]: unknown;
+}
+
+function normEquityCurve(navSeries: number[], dates?: string[]): [string, number][] {
+  if (!navSeries?.length) return [];
+  return navSeries.map((v, i) => {
+    const d = dates?.[i] || '';
+    const formatted = d?.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d || i.toString();
+    return [formatted, v] as [string, number];
+  });
+}
+
+function calcDrawdown(navSeries: number[]): [string, number][] {
+  if (!navSeries?.length) return [];
+  let peak = navSeries[0];
+  return navSeries.map((v, i) => {
+    if (v > peak) peak = v;
+    const dd = (v - peak) / peak;
+    return [i.toString(), dd * 100] as [string, number];
+  });
+}
 
 export default function RSITrendPage() {
   const [params, setParams] = useState({ rsiPeriod: 14, threshold: 50 });
-  const { result, loading, error, run } = useBacktest();
-  const item = getItem(result);
-  const equityCurve = getEquityCurve(item);
-  const drawdownCurve = getDrawdownCurve(item);
+  const [result, setResult] = useState<RSIResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    run({ codes: '512880,513100,515230', fast_ma: params.rsiPeriod, mid_ma: params.threshold, slow_ma: 50, trail_stop: 0.07, hard_stop: 0, begin: '2022-07-01', end: '2026-06-30', mode: 'etf', initial_capital: 1000000, volume_confirm: 0, pause_after_losses: 0 });
-  }, []);
+  const runBacktest = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchAPI<RSIResult>('backtest/rsi_trend', {
+        codes: '159941',
+        rsi_period: params.rsiPeriod,
+        rsi_threshold: params.threshold,
+      });
+      setResult(data);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '请求失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [params]);
+
+  useEffect(() => { runBacktest(); }, [runBacktest]);
+
+  const item = result?.results?.[0];
+  const navSeries = item?.nav_series;
+  const dates = item?.daily_dates;
+  const equityCurve = normEquityCurve(navSeries || [], dates);
+  const drawdownCurve = calcDrawdown(navSeries || []);
 
   return (
     <div className="space-y-6">
@@ -28,7 +87,7 @@ export default function RSITrendPage() {
           <h3 className="font-semibold">参数配置</h3>
           <Slider label="RSI 周期" value={params.rsiPeriod} min={6} max={30} step={1} onChange={(v) => setParams(p => ({ ...p, rsiPeriod: v }))} />
           <Slider label="RSI 阈值" value={params.threshold} min={30} max={70} step={5} onChange={(v) => setParams(p => ({ ...p, threshold: v }))} />
-          <button onClick={() => run({ codes: '512880,513100,515230', fast_ma: params.rsiPeriod, mid_ma: params.threshold, slow_ma: 50, trail_stop: 0.07, hard_stop: 0, begin: '2022-07-01', end: '2026-06-30', mode: 'etf', initial_capital: 1000000, volume_confirm: 0, pause_after_losses: 0 })} disabled={loading}
+          <button onClick={runBacktest} disabled={loading}
             className="w-full py-2 px-4 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:opacity-90">
             {loading ? '计算中...' : '运行回测'}
           </button>
@@ -38,7 +97,7 @@ export default function RSITrendPage() {
           {item ? (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard label="累计收益" value={`${item.total_return.toFixed(1)}%`} color="text-green-400" />
+                <StatCard label="累计收益" value={`${item.total_return.toFixed(1)}%`} color={item.total_return >= 0 ? 'text-green-400' : 'text-red-400'} />
                 <StatCard label="最大回撤" value={`${item.max_drawdown.toFixed(1)}%`} color="text-red-400" />
                 <StatCard label="夏普" value={item.sharpe_approx.toFixed(2)} color="text-yellow-400" />
                 <StatCard label="交易次数" value={`${item.trade_count}`} color="text-cyan-400" />
